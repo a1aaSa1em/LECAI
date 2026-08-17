@@ -155,6 +155,22 @@ The API remains the same:
 
 The tests verify that canonical state and decision logs survive closing and reopening the SQLite store.
 
+## Step 8: Demo Command
+
+The project now includes a simple CLI demo:
+
+```text
+python demo.py
+```
+
+The demo uses an isolated temporary SQLite database so it can be rerun without cleaning local state. It prints:
+
+- the two mocked source snapshots
+- the poll summary
+- each conflict decision with source evidence, winning source, rule, and reason
+- the final canonical state
+- a repeat-poll check showing unchanged conflicts do not create duplicate decision logs
+
 ## Next Step
 
-Add a simple demo command or interface that prints the two conflicts, the reasoning, and the final canonical state.
+Add run instructions for the FastAPI app and polish the README for final submission.
