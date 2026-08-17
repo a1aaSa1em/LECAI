@@ -1,5 +1,7 @@
 import asyncio
+import tempfile
 import unittest
+from pathlib import Path
 
 from app.reconciliation_agent import ReconciliationAgent
 from app.sources import get_source_a_assets, get_source_b_assets
@@ -8,7 +10,7 @@ from app.store import CanonicalStore
 
 class ReconciliationAgentTest(unittest.TestCase):
     def test_mock_conflict_scenarios_update_canonical_state(self):
-        store = CanonicalStore()
+        store = self._make_store()
         agent = ReconciliationAgent(
             store=store,
             source_a_loader=get_source_a_assets,
@@ -45,7 +47,7 @@ class ReconciliationAgentTest(unittest.TestCase):
         )
 
     def test_repeated_poll_does_not_duplicate_unchanged_decisions(self):
-        store = CanonicalStore()
+        store = self._make_store()
         agent = ReconciliationAgent(
             store=store,
             source_a_loader=get_source_a_assets,
@@ -63,27 +65,60 @@ class ReconciliationAgentTest(unittest.TestCase):
         self.assertEqual(second_summary.decisions_logged, 0)
         self.assertEqual(len(store.list_decisions()), 2)
 
-
-class ReconciliationAgentLoopTest(unittest.IsolatedAsyncioTestCase):
-    async def test_background_loop_runs_until_stopped(self):
-        store = CanonicalStore()
+    def test_canonical_state_persists_after_store_reopens(self):
+        store = self._make_store()
         agent = ReconciliationAgent(
             store=store,
             source_a_loader=get_source_a_assets,
             source_b_loader=get_source_b_assets,
-            poll_interval_seconds=0.01,
         )
 
-        started_status = await agent.start()
-        await asyncio.sleep(0.04)
-        running_status = agent.status()
-        stopped_status = await agent.stop()
+        agent.poll_once()
+        store.close()
 
-        self.assertTrue(started_status.running)
-        self.assertGreaterEqual(running_status.polls_completed, 1)
-        self.assertFalse(stopped_status.running)
-        self.assertIsNone(stopped_status.last_error)
-        self.assertEqual(len(store.list_assets()), 2)
+        reopened_store = CanonicalStore(self.db_path)
+        assets = {asset.asset_id: asset for asset in reopened_store.list_assets()}
+        decisions = reopened_store.list_decisions()
+
+        self.assertEqual(set(assets), {"robot-17", "sensor-22"})
+        self.assertEqual(assets["robot-17"].location, "Zone C")
+        self.assertEqual(assets["sensor-22"].status, "faulted")
+        self.assertEqual(len(decisions), 2)
+        reopened_store.close()
+
+    def setUp(self):
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.db_path = Path(self.temp_dir.name) / "canonical.sqlite3"
+
+    def tearDown(self):
+        self.temp_dir.cleanup()
+
+    def _make_store(self):
+        return CanonicalStore(self.db_path)
+
+
+class ReconciliationAgentLoopTest(unittest.IsolatedAsyncioTestCase):
+    async def test_background_loop_runs_until_stopped(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = CanonicalStore(Path(temp_dir) / "canonical.sqlite3")
+            agent = ReconciliationAgent(
+                store=store,
+                source_a_loader=get_source_a_assets,
+                source_b_loader=get_source_b_assets,
+                poll_interval_seconds=0.01,
+            )
+
+            started_status = await agent.start()
+            await asyncio.sleep(0.04)
+            running_status = agent.status()
+            stopped_status = await agent.stop()
+
+            self.assertTrue(started_status.running)
+            self.assertGreaterEqual(running_status.polls_completed, 1)
+            self.assertFalse(stopped_status.running)
+            self.assertIsNone(stopped_status.last_error)
+            self.assertEqual(len(store.list_assets()), 2)
+            store.close()
 
 
 if __name__ == "__main__":

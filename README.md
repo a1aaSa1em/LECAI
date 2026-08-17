@@ -132,6 +132,29 @@ The loop can also be controlled manually:
 
 Repeated polls are intentionally idempotent. If the same unresolved conflict appears again but the canonical state already reflects the winning record, the agent still counts the conflict as detected, but it does not write a duplicate decision log. This keeps the audit trail focused on state changes instead of noisy repeats.
 
+## Step 7: Canonical State Persistence
+
+The canonical store now uses SQLite instead of process memory. By default, the app writes to:
+
+```text
+data/canonical.sqlite3
+```
+
+The database has two tables:
+
+- `canonical_assets`: one current record per physical asset.
+- `decision_log`: append-only conflict decisions with the winning source, losing source, rule, reason, and structured evidence.
+
+`canonical_assets.asset_id` is the primary key, so downstream consumers cannot receive two canonical rows for the same asset. Each reconciliation overwrites the current canonical row only when the winning source changes the canonical state.
+
+The API remains the same:
+
+- `GET /assets` returns the current canonical inventory.
+- `GET /assets/{asset_id}` returns one canonical asset.
+- `GET /decisions` returns the decision history.
+
+The tests verify that canonical state and decision logs survive closing and reopening the SQLite store.
+
 ## Next Step
 
-Persist canonical state and decisions in SQLite instead of the temporary in-memory store.
+Add a simple demo command or interface that prints the two conflicts, the reasoning, and the final canonical state.
