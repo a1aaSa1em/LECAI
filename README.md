@@ -145,9 +145,11 @@ Run the test suite:
 
 The tests cover:
 
+- API routes for source snapshots, manual polling, agent status, decisions, and canonical assets
 - safety override conflict resolution
 - newest timestamp conflict resolution
 - reliability tiebreaking
+- SQLite canonical-store upsert behavior and decision-log round trips
 - canonical state updates for both demo conflicts
 - avoiding duplicate decision logs on repeated polls
 - background loop start/stop behavior
