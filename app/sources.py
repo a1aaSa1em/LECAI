@@ -15,7 +15,7 @@ SOURCE_A_SNAPSHOT = [
         location="Zone B",
         status="operational",
         faults=[],
-        updated_at="2026-08-16T10:02:00Z",
+        updated_at="2026-08-16T10:10:00Z",
         source="source_a",
     ),
 ]
@@ -23,18 +23,18 @@ SOURCE_A_SNAPSHOT = [
 SOURCE_B_SNAPSHOT = [
     AssetRecord(
         asset_id="robot-17",
-        location="Dock 1",
+        location="Zone C",
         status="idle",
         faults=[],
-        updated_at="2026-08-16T10:00:05Z",
+        updated_at="2026-08-16T10:04:00Z",
         source="source_b",
     ),
     AssetRecord(
         asset_id="sensor-22",
         location="Zone B",
-        status="operational",
-        faults=[],
-        updated_at="2026-08-16T10:02:03Z",
+        status="faulted",
+        faults=["temperature_spike"],
+        updated_at="2026-08-16T10:05:00Z",
         source="source_b",
     ),
 ]

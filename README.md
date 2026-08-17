@@ -90,6 +90,25 @@ Each policy decision returns:
 
 This approach is intentionally conservative: recent safety faults are prioritized, routine disagreements are settled by freshness, and source reliability is only used when the evidence is otherwise tied.
 
+## Step 5: Mock Conflict Scenarios
+
+The mock feeds in `app/sources.py` now include two intentional conflicts:
+
+| Asset | Conflict | Source A says | Source B says | Expected winner | Rule |
+| --- | --- | --- | --- | --- | --- |
+| `robot-17` | Location and timestamp | `Dock 1` at `10:00` | `Zone C` at `10:04` | `source_b` | Newest timestamp |
+| `sensor-22` | Status, faults, and timestamp | `operational` at `10:10` | `faulted` with `temperature_spike` at `10:05` | `source_b` | Recent fault safety override |
+
+These examples show two different kinds of reasoning:
+
+- `robot-17` is a routine disagreement. No safety issue is present, so the newer record wins.
+- `sensor-22` is safety-critical. `source_b` wins even though its timestamp is older, because recent fault reports are prioritized over normal status reports.
+
+After one `POST /agent/poll-once`, the canonical store should contain exactly one record for each asset:
+
+- `robot-17` persists with location `Zone C`.
+- `sensor-22` persists with status `faulted` and fault `temperature_spike`.
+
 ## Next Step
 
-Mock two conflict scenarios that demonstrate the policy.
+Build the reconciliation loop so the agent can continue polling instead of only running one cycle on demand.
