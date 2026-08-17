@@ -69,6 +69,27 @@ The model is defined in `app/models.py` and validates:
 
 The agent will match records by `asset_id`, then compare `location`, `status`, `faults`, and `updated_at` to detect disagreements. The `source` field is metadata, not a conflict field, because the same asset is expected to arrive from different feeds.
 
+## Step 4: Conflict Policy
+
+The conflict policy is implemented in `app/conflict_policy.py`. The rules are deliberately explicit so a teammate can understand why the agent trusted one source over the other.
+
+Rules are applied in this order:
+
+1. **Recent fault safety override**: if exactly one source reports `status = faulted` or a non-empty `faults` list, trust that source as long as the fault report is no more than 15 minutes older than the other report. This favors safety-critical information over a newer normal status.
+2. **Newest timestamp**: if no safety override applies, trust the source with the most recent `updated_at` timestamp.
+3. **Source reliability tiebreaker**: if timestamps are tied, trust the source with the higher configured reliability score. For this demo, `source_a` is set to `0.92` and `source_b` is set to `0.86`.
+
+Each policy decision returns:
+
+- the winning record
+- the losing record
+- the fields that conflicted
+- the rule that fired
+- a human-readable reason
+- structured evidence that can be written to the decision log
+
+This approach is intentionally conservative: recent safety faults are prioritized, routine disagreements are settled by freshness, and source reliability is only used when the evidence is otherwise tied.
+
 ## Next Step
 
-Define the conflict-resolution policy.
+Mock two conflict scenarios that demonstrate the policy.

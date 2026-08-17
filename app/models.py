@@ -54,8 +54,11 @@ class DecisionRecord(BaseModel):
     decision_id: str
     asset_id: str
     winner: SourceName
+    loser: SourceName
     conflict_fields: list[str]
+    rule: str
     reason: str
+    evidence: dict[str, Any] = Field(default_factory=dict)
     created_at: datetime
 
 
