@@ -67,3 +67,14 @@ class PollSummary(BaseModel):
     source_b_records: int
     conflicts_detected: int
     canonical_updates: int
+    decisions_logged: int
+
+
+class AgentStatus(BaseModel):
+    running: bool
+    poll_interval_seconds: float
+    polls_completed: int
+    last_summary: PollSummary | None = None
+    last_error: str | None = None
+    started_at: datetime | None = None
+    stopped_at: datetime | None = None

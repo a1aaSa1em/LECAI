@@ -18,6 +18,12 @@ class CanonicalStore:
         canonical_asset = asset.model_copy(update={"source": "canonical"})
         self._assets[asset.asset_id] = canonical_asset
 
+    def canonical_matches(self, asset: AssetRecord) -> bool:
+        existing = self.get_asset(asset.asset_id)
+        if existing is None:
+            return False
+        return existing.comparison_payload() == asset.comparison_payload()
+
     def list_decisions(self) -> list[DecisionRecord]:
         return self._decisions
 

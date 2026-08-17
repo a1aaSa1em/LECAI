@@ -109,6 +109,29 @@ After one `POST /agent/poll-once`, the canonical store should contain exactly on
 - `robot-17` persists with location `Zone C`.
 - `sensor-22` persists with status `faulted` and fault `temperature_spike`.
 
+## Step 6: Reconciliation Loop
+
+The reconciliation agent now has a continuous background loop around the deterministic `poll_once()` method.
+
+When the FastAPI app starts, the loop starts automatically and repeats every 5 seconds:
+
+1. Poll `source_a`.
+2. Poll `source_b`.
+3. Match records by `asset_id`.
+4. Detect differing `location`, `status`, `faults`, or `updated_at` fields.
+5. Apply the conflict policy.
+6. Update the canonical store if the winning state changed.
+7. Write a decision record when a conflict produces a new canonical state.
+
+The loop can also be controlled manually:
+
+- `POST /agent/start`
+- `POST /agent/stop`
+- `GET /agent/status`
+- `POST /agent/poll-once`
+
+Repeated polls are intentionally idempotent. If the same unresolved conflict appears again but the canonical state already reflects the winning record, the agent still counts the conflict as detected, but it does not write a duplicate decision log. This keeps the audit trail focused on state changes instead of noisy repeats.
+
 ## Next Step
 
-Build the reconciliation loop so the agent can continue polling instead of only running one cycle on demand.
+Persist canonical state and decisions in SQLite instead of the temporary in-memory store.
