@@ -1,176 +1,171 @@
 # Asset Reconciliation Agent
 
-This project will demonstrate an agent that keeps a canonical inventory of physical assets by reconciling two independent operational feeds that can disagree.
+A small Python/FastAPI agent that maintains a canonical inventory of physical assets by reconciling two independent operational feeds that can disagree.
 
-## Step 1: Stack Choice
+The project focuses on the decision-making part of reconciliation: detecting conflicts, choosing which source to trust with explicit rules, logging the reasoning, and keeping one canonical record per asset for downstream consumers.
 
-The project uses a small Python stack that is easy to run, explain, and review:
+## What It Does
 
-- **Python** for the agent, source mocks, and demo logic.
-- **FastAPI** for two mocked operational source APIs and one canonical asset API.
-- **SQLite** for the canonical asset state and decision history.
-- **Background polling loop** for the continuously running reconciliation agent.
-- **JSON decision logs** so every conflict resolution can be inspected by a teammate.
+- Mocks two independent asset-state systems: `source_a` and `source_b`.
+- Polls both sources continuously through a background reconciliation loop.
+- Detects conflicts for the same `asset_id` across `location`, `status`, `faults`, and `updated_at`.
+- Resolves disagreements with a documented conflict policy.
+- Persists canonical assets and decision logs in SQLite.
+- Exposes canonical state through a simple FastAPI interface.
+- Includes a CLI demo that shows two conflict scenarios end to end.
 
-## Why This Stack
+## Stack
 
-FastAPI makes it straightforward to expose realistic REST endpoints without a large framework. SQLite gives the project durable canonical state with no database server setup. A background polling loop is enough to show the agent behavior clearly: it can fetch snapshots, compare records, detect conflicts, choose a winner, write the result, and expose the canonical state.
+- Python
+- FastAPI
+- SQLite
+- Pydantic
+- pytest
 
-The goal is not to build production infrastructure. The goal is to make the reconciliation logic transparent, runnable, and defensible.
+This stack keeps the demo easy to run while still showing realistic service boundaries, persistence, and API access.
 
-## Planned Components
+## Architecture
 
-- `source_a`: mocked operational feed A.
-- `source_b`: mocked operational feed B.
-- `reconciler`: multi-step agent that polls both feeds and applies conflict rules.
-- `canonical_store`: SQLite-backed canonical asset state.
-- `decision_log`: structured history of conflicts, winners, and justifications.
-- `api`: simple downstream interface for querying canonical state and decisions.
+```text
+source_a mock feed ┐
+                   ├─ reconciliation_agent ── SQLite canonical store ── FastAPI API
+source_b mock feed ┘
+```
 
-## Step 2: System Shape
+Main files:
 
-The first runnable shape is split into three pieces:
+- `app/sources.py`: mocked source snapshots.
+- `app/models.py`: asset, decision, poll, and agent status models.
+- `app/conflict_policy.py`: explicit trust policy and reasoning.
+- `app/reconciliation_agent.py`: polling, conflict detection, decisions, and loop control.
+- `app/store.py`: SQLite-backed canonical assets and decision log.
+- `app/main.py`: FastAPI app and API routes.
+- `demo.py`: terminal demo for the two required scenarios.
 
-- **`source_a` mock feed**: exposed at `GET /source-a/assets`.
-- **`source_b` mock feed**: exposed at `GET /source-b/assets`.
-- **`reconciliation_agent`**: exposed for now through `POST /agent/poll-once`, which polls both feeds and reports what it saw.
+## Conflict Policy
 
-The downstream-facing canonical interface is:
+Rules are applied in order:
+
+1. **Recent fault safety override**: if exactly one source reports `status = faulted` or a non-empty `faults` list, trust that source as long as the fault report is no more than 15 minutes older than the other report. This prioritizes safety-critical information over a newer normal status.
+2. **Newest timestamp**: if no safety override applies, trust the source with the most recent `updated_at`.
+3. **Source reliability tiebreaker**: if timestamps are tied, trust the source with the higher configured reliability score. In this demo, `source_a = 0.92` and `source_b = 0.86`.
+
+Each decision records the winning source, losing source, conflicting fields, rule, human-readable reason, and structured evidence.
+
+## Demo Scenarios
+
+The mocked feeds include two intentional conflicts:
+
+| Asset | Conflict | Source A says | Source B says | Winner | Rule |
+| --- | --- | --- | --- | --- | --- |
+| `robot-17` | Location and timestamp | `Dock 1` at `10:00` | `Zone C` at `10:04` | `source_b` | Newest timestamp |
+| `sensor-22` | Status, faults, and timestamp | `operational` at `10:10` | `faulted` with `temperature_spike` at `10:05` | `source_b` | Recent fault safety override |
+
+The important difference is that `sensor-22` chooses the older record because it contains a recent safety fault.
+
+## Quickstart
+
+Create a virtual environment and install dependencies:
+
+```bash
+python3 -m venv .venv
+.venv/bin/python -m pip install -r requirements.txt
+```
+
+Run the terminal demo:
+
+```bash
+.venv/bin/python demo.py
+```
+
+Run the API:
+
+```bash
+.venv/bin/python -m uvicorn app.main:app --reload
+```
+
+Then open:
+
+```text
+http://127.0.0.1:8000/docs
+```
+
+## API
+
+Mock source feeds:
+
+- `GET /source-a/assets`
+- `GET /source-b/assets`
+
+Agent controls:
+
+- `POST /agent/poll-once`
+- `POST /agent/start`
+- `POST /agent/stop`
+- `GET /agent/status`
+
+Canonical downstream interface:
 
 - `GET /assets`
 - `GET /assets/{asset_id}`
 - `GET /decisions`
 
-For this step, the canonical store is temporarily in memory. The next steps will define the asset model in more detail, add SQLite persistence, and implement the conflict-resolution policy.
+The FastAPI app starts the background reconciliation loop automatically. It polls every 5 seconds by default.
 
-## Step 3: Asset Model
+## Persistence
 
-Every source reports assets using the same `AssetRecord` shape:
-
-```json
-{
-  "asset_id": "robot-17",
-  "location": "Zone A",
-  "status": "operational",
-  "faults": [],
-  "updated_at": "2026-08-16T10:01:00Z",
-  "source": "source_a"
-}
-```
-
-The model is defined in `app/models.py` and validates:
-
-- `asset_id`: required string identifying the same physical asset across feeds.
-- `location`: required string.
-- `status`: one of `operational`, `idle`, `faulted`, `maintenance`, or `offline`.
-- `faults`: list of fault codes, normalized by trimming blanks and removing duplicates.
-- `updated_at`: timestamp used as evidence during reconciliation.
-- `source`: one of `source_a`, `source_b`, or `canonical`.
-
-The agent will match records by `asset_id`, then compare `location`, `status`, `faults`, and `updated_at` to detect disagreements. The `source` field is metadata, not a conflict field, because the same asset is expected to arrive from different feeds.
-
-## Step 4: Conflict Policy
-
-The conflict policy is implemented in `app/conflict_policy.py`. The rules are deliberately explicit so a teammate can understand why the agent trusted one source over the other.
-
-Rules are applied in this order:
-
-1. **Recent fault safety override**: if exactly one source reports `status = faulted` or a non-empty `faults` list, trust that source as long as the fault report is no more than 15 minutes older than the other report. This favors safety-critical information over a newer normal status.
-2. **Newest timestamp**: if no safety override applies, trust the source with the most recent `updated_at` timestamp.
-3. **Source reliability tiebreaker**: if timestamps are tied, trust the source with the higher configured reliability score. For this demo, `source_a` is set to `0.92` and `source_b` is set to `0.86`.
-
-Each policy decision returns:
-
-- the winning record
-- the losing record
-- the fields that conflicted
-- the rule that fired
-- a human-readable reason
-- structured evidence that can be written to the decision log
-
-This approach is intentionally conservative: recent safety faults are prioritized, routine disagreements are settled by freshness, and source reliability is only used when the evidence is otherwise tied.
-
-## Step 5: Mock Conflict Scenarios
-
-The mock feeds in `app/sources.py` now include two intentional conflicts:
-
-| Asset | Conflict | Source A says | Source B says | Expected winner | Rule |
-| --- | --- | --- | --- | --- | --- |
-| `robot-17` | Location and timestamp | `Dock 1` at `10:00` | `Zone C` at `10:04` | `source_b` | Newest timestamp |
-| `sensor-22` | Status, faults, and timestamp | `operational` at `10:10` | `faulted` with `temperature_spike` at `10:05` | `source_b` | Recent fault safety override |
-
-These examples show two different kinds of reasoning:
-
-- `robot-17` is a routine disagreement. No safety issue is present, so the newer record wins.
-- `sensor-22` is safety-critical. `source_b` wins even though its timestamp is older, because recent fault reports are prioritized over normal status reports.
-
-After one `POST /agent/poll-once`, the canonical store should contain exactly one record for each asset:
-
-- `robot-17` persists with location `Zone C`.
-- `sensor-22` persists with status `faulted` and fault `temperature_spike`.
-
-## Step 6: Reconciliation Loop
-
-The reconciliation agent now has a continuous background loop around the deterministic `poll_once()` method.
-
-When the FastAPI app starts, the loop starts automatically and repeats every 5 seconds:
-
-1. Poll `source_a`.
-2. Poll `source_b`.
-3. Match records by `asset_id`.
-4. Detect differing `location`, `status`, `faults`, or `updated_at` fields.
-5. Apply the conflict policy.
-6. Update the canonical store if the winning state changed.
-7. Write a decision record when a conflict produces a new canonical state.
-
-The loop can also be controlled manually:
-
-- `POST /agent/start`
-- `POST /agent/stop`
-- `GET /agent/status`
-- `POST /agent/poll-once`
-
-Repeated polls are intentionally idempotent. If the same unresolved conflict appears again but the canonical state already reflects the winning record, the agent still counts the conflict as detected, but it does not write a duplicate decision log. This keeps the audit trail focused on state changes instead of noisy repeats.
-
-## Step 7: Canonical State Persistence
-
-The canonical store now uses SQLite instead of process memory. By default, the app writes to:
+The canonical store writes to:
 
 ```text
 data/canonical.sqlite3
 ```
 
-The database has two tables:
+It contains:
 
-- `canonical_assets`: one current record per physical asset.
-- `decision_log`: append-only conflict decisions with the winning source, losing source, rule, reason, and structured evidence.
+- `canonical_assets`: one current row per asset, keyed by `asset_id`.
+- `decision_log`: append-only audit history of conflict decisions.
 
-`canonical_assets.asset_id` is the primary key, so downstream consumers cannot receive two canonical rows for the same asset. Each reconciliation overwrites the current canonical row only when the winning source changes the canonical state.
+Repeated polls are idempotent. If the same conflict appears again and the canonical state already matches the winning record, the conflict is still detected but a duplicate decision log is not written.
 
-The API remains the same:
-
-- `GET /assets` returns the current canonical inventory.
-- `GET /assets/{asset_id}` returns one canonical asset.
-- `GET /decisions` returns the decision history.
-
-The tests verify that canonical state and decision logs survive closing and reopening the SQLite store.
-
-## Step 8: Demo Command
-
-The project now includes a simple CLI demo:
+To reset local demo state for the API, delete:
 
 ```text
-python demo.py
+data/canonical.sqlite3
 ```
 
-The demo uses an isolated temporary SQLite database so it can be rerun without cleaning local state. It prints:
+The CLI demo uses a temporary SQLite database, so it is repeatable and does not alter `data/canonical.sqlite3`.
 
-- the two mocked source snapshots
-- the poll summary
-- each conflict decision with source evidence, winning source, rule, and reason
-- the final canonical state
-- a repeat-poll check showing unchanged conflicts do not create duplicate decision logs
+## Tests
 
-## Next Step
+Run the test suite:
 
-Add run instructions for the FastAPI app and polish the README for final submission.
+```bash
+.venv/bin/python -m pytest -q
+```
+
+The tests cover:
+
+- safety override conflict resolution
+- newest timestamp conflict resolution
+- reliability tiebreaking
+- canonical state updates for both demo conflicts
+- avoiding duplicate decision logs on repeated polls
+- background loop start/stop behavior
+- SQLite persistence after closing and reopening the store
+- CLI demo output
+
+## Design Notes
+
+The policy is intentionally explicit instead of trying to infer truth with a black-box score. That makes each decision defensible in a review: a teammate can read the decision log and see exactly which rule fired and what evidence was used.
+
+SQLite is enough for this submission because the canonical-state contract matters more than distributed infrastructure. The store still uses a real primary key on `asset_id`, so downstream teams get one canonical state per asset.
+
+## What I Would Do Next
+
+- Add real source connectors with authentication, retries, and source-specific adapters.
+- Track historical source accuracy from confirmed outcomes instead of static reliability scores.
+- Add a human review queue for low-confidence or high-impact conflicts.
+- Emit metrics for conflict rate, stale sources, fault overrides, and reconciliation latency.
+- Add migrations for schema changes.
+- Add API authentication before exposing canonical state to downstream teams.
+- Add a small web dashboard for inspecting assets and decision history.
